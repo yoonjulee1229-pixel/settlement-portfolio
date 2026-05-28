@@ -571,24 +571,34 @@ async function fetchPrices(){
   pricesFetching=true;
   document.getElementById('price-status').innerHTML='<span style="color:var(--yellow)">&#9679; Fetching...</span>';
   const syms=[...new Set(open.map(t=>t.ticker))];
-  try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:800,
-        tools:[{type:'web_search_20250305',name:'web_search'}],
-        messages:[{role:'user',content:`Get latest stock prices for: ${syms.join(', ')}. Return ONLY JSON: {"TICKER": price_number, ...}. Numbers only.`}]})
-    });
-    const d=await r.json();
-    const txt=d.content.filter(b=>b.type==='text').map(b=>b.text).join('');
-    const m=txt.match(/\{[^{}]+\}/s);
-    if(m){
-      const prices=JSON.parse(m[0]);
-      open.forEach(t=>{if(prices[t.ticker]!=null){t.lastPrice=parseFloat(prices[t.ticker]);}});
-      const tm=new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
-      document.getElementById('price-status').innerHTML=`<span style="color:var(--green)">&#9679; Live @ ${tm}</span>`;
-      refreshAll();
-    }
-  }catch(e){document.getElementById('price-status').innerHTML='<span style="color:var(--red)">&#9679; Fetch failed</span>';}
+  let fetched=0;
+  // Try Yahoo Finance via allorigins proxy for each ticker
+  await Promise.all(syms.map(async ticker=>{
+    try{
+      // convert ticker to yahoo format
+      let ySym=ticker;
+      if(ticker.match(/^\d+\.HK$/))ySym=ticker.replace(/^0+/,'').padStart(4,'0')+'.HK'; // normalize HK tickers
+      const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1d&range=1d`;
+      const proxy=`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const r=await fetch(proxy,{signal:AbortSignal.timeout(8000)});
+      if(!r.ok)return;
+      const raw=await r.json();
+      const d=JSON.parse(raw.contents);
+      const price=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+      if(price){
+        open.filter(t=>t.ticker===ticker).forEach(t=>t.lastPrice=price);
+        fetched++;
+      }
+    }catch(e){}
+  }));
   pricesFetching=false;
+  if(fetched>0){
+    const tm=new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
+    document.getElementById('price-status').innerHTML=`<span style="color:var(--green)">&#9679; ${fetched}/${syms.length} @ ${tm}</span>`;
+    save();refreshAll();
+  } else {
+    document.getElementById('price-status').innerHTML='<span style="color:var(--red)">&#9679; Failed — update manually</span>';
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -846,6 +856,12 @@ function renderHoldings(){
     return `<div class="hrow"><div><div class="hticker">${t.ticker}</div><div class="hname">${t.name}</div><div style="margin-top:3px"><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></div></div><div><div style="font-size:9px;color:var(--muted);margin-bottom:2px">${w.toFixed(1)}% of equity</div><div class="hbar-bg"><div class="hbar" style="width:${Math.min(w,100)}%"></div></div><div style="font-size:9px;color:var(--muted);margin-top:2px">${t.qty.toLocaleString()} shares @ ${SYM[t.ccy]}${t.entry.toLocaleString()}</div></div><div style="text-align:right"><div style="font-size:9px;color:var(--muted);margin-bottom:2px">Cost</div><div style="font-size:12px">${fA(t.costSGD)}</div></div><div style="text-align:right"><div style="font-size:9px;color:var(--muted);margin-bottom:2px">Value</div><div style="font-size:12px">${fA(t.valueSGD)}</div></div><div style="text-align:right"><div class="sv ${un>=0?'pos':'neg'}" style="font-size:14px">${fS(un)}</div><div style="font-size:11px;color:${pct>=0?'var(--green)':'var(--red)'}">${fP(pct)}</div><div style="font-size:9px;color:var(--muted);margin-top:2px">${t.date}</div></div></div>`;
   }).join('');
 }
+function updatePrice(id){
+  const t=trades.find(x=>x.id===id);if(!t)return;
+  const p=parseFloat(prompt(`Update last price for ${t.ticker} (current: ${SYM[t.ccy]}${t.lastPrice})`));
+  if(!p||isNaN(p))return;
+  t.lastPrice=p;save();refreshAll();
+}
 function renderPositions(){
   const tbody=document.getElementById('pos-body');
   const open=trades.filter(t=>t.isOpen);
@@ -853,7 +869,7 @@ function renderPositions(){
   tbody.innerHTML=open.map(t=>{
     t.valueSGD=toSGD(t.lastPrice*t.qty,t.ccy);
     const un=t.valueSGD-t.costSGD,pct=t.costSGD>0?un/t.costSGD*100:0;
-    return `<tr><td><span style="font-weight:700;color:var(--o)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${SYM[t.ccy]}${(t.lastPrice||t.entry).toLocaleString()}</td><td>${t.qty.toLocaleString()}</td><td>${fA(t.costSGD)}</td><td>${fA(t.valueSGD)}</td><td class="${un>=0?'pos':'neg'}">${fS(un)}</td><td class="${pct>=0?'pos':'neg'}">${fP(pct)}</td><td style="color:var(--muted)">${t.date}</td><td><button class="xbtn" onclick="delTrade('${t.id}')">&#10005;</button></td></tr>`;
+    return `<tr><td><span style="font-weight:700;color:var(--o)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${SYM[t.ccy]}${(t.lastPrice||t.entry).toLocaleString()} <button class="xbtn" onclick="updatePrice('${t.id}')" title="Update price" style="font-size:9px;padding:1px 5px;margin-left:3px;color:var(--o);border-color:rgba(255,102,0,.3)">&#9998;</button></td><td>${t.qty.toLocaleString()}</td><td>${fA(t.costSGD)}</td><td>${fA(t.valueSGD)}</td><td class="${un>=0?'pos':'neg'}">${fS(un)}</td><td class="${pct>=0?'pos':'neg'}">${fP(pct)}</td><td style="color:var(--muted)">${t.date}</td><td><button class="xbtn" onclick="delTrade('${t.id}')">&#10005;</button></td></tr>`;
   }).join('');
 }
 function renderLog(){
