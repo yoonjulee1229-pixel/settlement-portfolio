@@ -817,7 +817,15 @@ function save(){
 function load(){
   try{
     const r=localStorage.getItem(SK);
-    if(r){const d=JSON.parse(r);trades=d.trades||[];notes=d.notes||[];cashMoves=d.cashMoves||[];cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};inceptionDate=d.inceptionDate||null;}
+    if(r){
+      const d=JSON.parse(r);
+      trades=(d.trades||[]).map(t=>({...t,id:String(t.id)}));
+      notes=d.notes||[];
+      cashMoves=(d.cashMoves||[]).map(m=>({...m,id:String(m.id)}));
+      cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};
+      inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};
+      inceptionDate=d.inceptionDate||null;
+    }
   }catch(e){}
 }
 
@@ -841,7 +849,7 @@ function saveCash(){
   if(!inceptionDate)inceptionDate=new Date().toISOString().split('T')[0];
   // record as deposit
   CCYS.forEach(c=>{
-    if(vals[c]>0)cashMoves.push({id:Date.now()+Math.random(),date:inceptionDate,type:'deposit',ccy:c,amount:vals[c],note:'Inception capital',sgdEquiv:toSGD(vals[c],c)});
+    if(vals[c]>0)cashMoves.push({id:String(Date.now())+String(Math.random()).slice(2),date:inceptionDate,type:'deposit',ccy:c,amount:vals[c],note:'Inception capital',sgdEquiv:toSGD(vals[c],c)});
   });
   save();closeCashModal();refreshAll();renderCashLog();
 }
@@ -875,11 +883,11 @@ function addCashMove(){
     cash[ccy]-=amount;
     cash[toCcy]=(cash[toCcy]||0)+toAmount;
     const sgdEquiv=toSGD(amount,ccy);
-    cashMoves.push({id:Date.now(),date,type:'convert',ccy,amount,toCcy,toAmount,note:note||(fmtAmt(amount,ccy)+' → '+fmtAmt(toAmount,toCcy)),sgdEquiv});
+    cashMoves.push({id:String(Date.now()),date,type:'convert',ccy,amount,toCcy,toAmount,note:note||(fmtAmt(amount,ccy)+' → '+fmtAmt(toAmount,toCcy)),sgdEquiv});
     document.getElementById('c-toamount').value='';
   } else {
     const sgdEquiv=toSGD(amount,ccy);
-    cashMoves.push({id:Date.now(),date,type,ccy,amount,note,sgdEquiv});
+    cashMoves.push({id:String(Date.now()),date,type,ccy,amount,note,sgdEquiv});
     if(type==='deposit')cash[ccy]=(cash[ccy]||0)+amount;
     else if(type==='withdraw'){
       if((cash[ccy]||0)<amount){alert('Insufficient '+ccy+' balance.');return;}
@@ -893,16 +901,16 @@ function addCashMove(){
   document.getElementById('c-note').value='';
 }
 function deleteCashMove(id){
-  const idNum=parseFloat(id);
-  const m=cashMoves.find(x=>x.id===idNum);
-  if(!m)return;
+  const sid=String(id);
+  const m=cashMoves.find(x=>String(x.id)===sid);
+  if(!m){console.log('cashMove not found',id,cashMoves.map(x=>x.id));return;}
   if(m.type==='deposit')cash[m.ccy]=Math.max(0,(cash[m.ccy]||0)-m.amount);
   else if(m.type==='withdraw')cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
   else if(m.type==='convert'){
     cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
     cash[m.toCcy]=Math.max(0,(cash[m.toCcy]||0)-m.toAmount);
   }
-  cashMoves=cashMoves.filter(x=>x.id!==idNum);
+  cashMoves=cashMoves.filter(x=>String(x.id)!==sid);
   save();refreshAll();renderCashLog();
 }
 function renderCashCards(){
@@ -935,7 +943,7 @@ function renderCashLog(){
       <td style="font-weight:700">${amtDisplay}</td>
       <td style="font-size:11px;color:var(--muted)">${fmtSabs(m.sgdEquiv)}</td>
       <td style="color:var(--muted);font-size:11px">${m.note||'—'}</td>
-      <td><button onclick="deleteCashMove(${m.id})" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer;font-family:inherit">&#10005;</button></td>
+      <td><button onclick="deleteCashMove('${m.id}')" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer;font-family:inherit">&#10005;</button></td>
     </tr>`;
   }).join('');
 }
@@ -1045,15 +1053,15 @@ function addTrade(){
   if(!isOpen&&side==='short'&&exit!=null){cash[ccy]=(cash[ccy]||0)+(exit*qty);}
   const info=TICKERS.find(s=>s.t===ticker)||{n:ticker};
   if(!inceptionDate)inceptionDate=date;
-  trades.unshift({id:Date.now(),ticker,name:info.n,market,side,ccy,entry,exit,qty,date,noteText,pnlNative,pnlSGD,costSGD,fxUsed:fxRates[ccy],isOpen,lastPrice:exit||entry});
+  trades.unshift({id:String(Date.now()),ticker,name:info.n,market,side,ccy,entry,exit,qty,date,noteText,pnlNative,pnlSGD,costSGD,fxUsed:fxRates[ccy],isOpen,lastPrice:exit||entry});
   save();refreshAll();clearForm();sw('overview');
 }
 function deleteTrade(id){
-  const idNum=parseFloat(id);
-  const t=trades.find(x=>x.id===idNum);
-  if(!t)return;
+  const sid=String(id);
+  const t=trades.find(x=>String(x.id)===sid);
+  if(!t){console.log('trade not found',id,trades.map(x=>x.id));return;}
   if(t.side==='long'){cash[t.ccy]=(cash[t.ccy]||0)+t.costSGD/fxRates[t.ccy];if(!t.isOpen&&t.exit)cash[t.ccy]-=t.exit*t.qty;}
-  trades=trades.filter(x=>x.id!==idNum);
+  trades=trades.filter(x=>String(x.id)!==sid);
   save();refreshAll();
 }
 
@@ -1171,7 +1179,7 @@ function renderPositions(){
   tbody.innerHTML=open.map(t=>{
     t.valueSGD=toSGD(t.lastPrice*t.qty,t.ccy);
     const un=t.valueSGD-t.costSGD;const pct=t.costSGD>0?un/t.costSGD*100:0;
-    return `<tr><td><span style="font-weight:700;color:var(--bb)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${SYM[t.ccy]}${(t.lastPrice||t.entry).toLocaleString()}</td><td>${t.qty.toLocaleString()}</td><td>${fmtSabs(t.costSGD)}</td><td>${fmtSabs(t.valueSGD)}</td><td class="${un>=0?'pos':'neg'}">${fmtS(un)}</td><td class="${pct>=0?'pos':'neg'}">${fmtP(pct)}</td><td style="color:var(--muted)">${t.date}</td><td><button onclick="deleteTrade(${t.id})" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer">&#10005;</button></td></tr>`;
+    return `<tr><td><span style="font-weight:700;color:var(--bb)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${SYM[t.ccy]}${(t.lastPrice||t.entry).toLocaleString()}</td><td>${t.qty.toLocaleString()}</td><td>${fmtSabs(t.costSGD)}</td><td>${fmtSabs(t.valueSGD)}</td><td class="${un>=0?'pos':'neg'}">${fmtS(un)}</td><td class="${pct>=0?'pos':'neg'}">${fmtP(pct)}</td><td style="color:var(--muted)">${t.date}</td><td><button onclick="deleteTrade('${t.id}')" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer">&#10005;</button></td></tr>`;
   }).join('');
 }
 
@@ -1181,7 +1189,7 @@ function renderPositions(){
 function renderLog(){
   const tbody=document.getElementById('log-body');
   if(!trades.length){tbody.innerHTML='<tr><td colspan="12"><div class="empty">No trades yet.</div></td></tr>';return;}
-  tbody.innerHTML=[...trades].sort((a,b)=>b.date.localeCompare(a.date)).map(t=>`<tr><td><span style="font-weight:700;color:var(--bb)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td><span class="badge ${t.isOpen?'b-open':'b-closed'}">${t.isOpen?'OPEN':'CLOSED'}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${t.exit?SYM[t.ccy]+t.exit.toLocaleString():'—'}</td><td>${t.qty.toLocaleString()}</td><td style="color:var(--muted)">${t.date}</td><td class="${(t.pnlNative||0)>=0?'pos':'neg'}">${t.pnlNative!=null?fmtN(t.pnlNative,t.ccy):'—'}</td><td class="${(t.pnlSGD||0)>=0?'pos':'neg'}" style="font-weight:700">${t.pnlSGD!=null?fmtS(t.pnlSGD):'—'}</td><td style="font-size:10px;color:var(--muted)">${(t.fxUsed||0).toFixed(4)}</td><td><button onclick="deleteTrade(${t.id})" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer">&#10005;</button></td></tr>`).join('');
+  tbody.innerHTML=[...trades].sort((a,b)=>b.date.localeCompare(a.date)).map(t=>`<tr><td><span style="font-weight:700;color:var(--bb)">${t.ticker}</span><br><span style="font-size:9px;color:var(--muted)">${t.name}</span></td><td><span class="badge b-${t.market.toLowerCase()}">${t.market}</span></td><td><span class="badge b-${t.side}">${t.side.toUpperCase()}</span></td><td><span class="badge ${t.isOpen?'b-open':'b-closed'}">${t.isOpen?'OPEN':'CLOSED'}</span></td><td>${SYM[t.ccy]}${t.entry.toLocaleString()}</td><td>${t.exit?SYM[t.ccy]+t.exit.toLocaleString():'—'}</td><td>${t.qty.toLocaleString()}</td><td style="color:var(--muted)">${t.date}</td><td class="${(t.pnlNative||0)>=0?'pos':'neg'}">${t.pnlNative!=null?fmtN(t.pnlNative,t.ccy):'—'}</td><td class="${(t.pnlSGD||0)>=0?'pos':'neg'}" style="font-weight:700">${t.pnlSGD!=null?fmtS(t.pnlSGD):'—'}</td><td style="font-size:10px;color:var(--muted)">${(t.fxUsed||0).toFixed(4)}</td><td><button onclick="deleteTrade('${t.id}')" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer">&#10005;</button></td></tr>`).join('');
 }
 
 // ============================================================
@@ -1395,7 +1403,9 @@ async function loadFromGist(){
     const content = g.files['settlement_portfolio.json']?.content;
     if(!content) return;
     const d = JSON.parse(content);
-    trades=d.trades||[]; notes=d.notes||[]; cashMoves=d.cashMoves||[];
+    trades=(d.trades||[]).map(t=>({...t,id:String(t.id)}));
+    notes=d.notes||[];
+    cashMoves=(d.cashMoves||[]).map(m=>({...m,id:String(m.id)}));
     cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};
     inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};
     inceptionDate=d.inceptionDate||null;
