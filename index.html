@@ -893,16 +893,16 @@ function addCashMove(){
   document.getElementById('c-note').value='';
 }
 function deleteCashMove(id){
-  const m=cashMoves.find(x=>x.id===id);
+  const idNum=parseFloat(id);
+  const m=cashMoves.find(x=>x.id===idNum);
   if(!m)return;
   if(m.type==='deposit')cash[m.ccy]=Math.max(0,(cash[m.ccy]||0)-m.amount);
   else if(m.type==='withdraw')cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
   else if(m.type==='convert'){
-    // reverse the conversion
     cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
     cash[m.toCcy]=Math.max(0,(cash[m.toCcy]||0)-m.toAmount);
   }
-  cashMoves=cashMoves.filter(x=>x.id!==id);
+  cashMoves=cashMoves.filter(x=>x.id!==idNum);
   save();refreshAll();renderCashLog();
 }
 function renderCashCards(){
@@ -1049,11 +1049,11 @@ function addTrade(){
   save();refreshAll();clearForm();sw('overview');
 }
 function deleteTrade(id){
-  const t=trades.find(x=>x.id===id);
+  const idNum=parseFloat(id);
+  const t=trades.find(x=>x.id===idNum);
   if(!t)return;
-  // return cash on delete
   if(t.side==='long'){cash[t.ccy]=(cash[t.ccy]||0)+t.costSGD/fxRates[t.ccy];if(!t.isOpen&&t.exit)cash[t.ccy]-=t.exit*t.qty;}
-  trades=trades.filter(x=>x.id!==id);
+  trades=trades.filter(x=>x.id!==idNum);
   save();refreshAll();
 }
 
