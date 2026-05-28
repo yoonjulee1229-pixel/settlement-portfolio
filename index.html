@@ -162,6 +162,26 @@ tbody tr:hover td{background:var(--bg3)}
 </head>
 <body>
 
+<!-- GIST TOKEN MODAL -->
+<div class="modal-bg" id="gist-modal">
+  <div class="modal">
+    <div class="modal-title">&#9679; GitHub Gist sync</div>
+    <div class="modal-sub">Enter your GitHub Personal Access Token to sync your portfolio data via Gist. Your token is stored only in your browser — never sent anywhere except GitHub.</div>
+    <div class="field" style="margin-bottom:12px">
+      <label>GitHub Token (ghp_...)</label>
+      <input type="password" id="gist-token-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="font-size:13px;letter-spacing:1px">
+    </div>
+    <div id="gist-status" style="font-size:11px;color:var(--muted);margin-bottom:14px;min-height:16px"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-p" style="flex:1" onclick="saveGistToken()">&#10003; Connect & sync</button>
+      <button class="btn-s" onclick="closeGistModal()">Skip</button>
+    </div>
+    <div style="margin-top:12px;font-size:10px;color:var(--muted);line-height:1.6">
+      &#9432; Only needs <code style="background:var(--bg3);padding:1px 4px;color:var(--bb)">gist</code> permission. Your friend opens the same URL and sees your live portfolio automatically.
+    </div>
+  </div>
+</div>
+
 <!-- CASH SETUP MODAL -->
 <div class="modal-bg" id="cash-modal">
   <div class="modal">
@@ -404,6 +424,21 @@ tbody tr:hover td{background:var(--bg3)}
 <!-- ===== SHARE ===== -->
 <div id="panel-share" class="panel">
   <div class="shdr">Share journal</div>
+  <div class="share-card" style="border-left:3px solid var(--green);margin-bottom:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">&#9679; Live sync via GitHub Gist</div>
+    <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:10px">
+      Connect your GitHub token once — your data auto-syncs to a private Gist. Share your portfolio URL and friends always see the latest data.
+    </div>
+    <div id="gist-connected-status" style="display:none;background:var(--bg3);border:1px solid rgba(0,196,113,.3);padding:10px 12px;margin-bottom:10px;font-size:11px">
+      <span style="color:var(--green);font-weight:700">&#10003; Connected</span> — auto-syncing to Gist
+      <div style="margin-top:4px;color:var(--muted)" id="gist-id-display"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-p" onclick="openGistModal()" id="gist-connect-btn">&#9679; Connect GitHub token</button>
+      <button class="btn-s" onclick="syncToGist()" id="gist-sync-btn" style="display:none">&#8635; Sync now</button>
+      <button class="btn-s" onclick="disconnectGist()" id="gist-disconnect-btn" style="display:none;color:var(--red);border-color:rgba(255,59,78,.3)">Disconnect</button>
+    </div>
+  </div>
   <div class="share-card" style="border-left:3px solid var(--bb)">
     <div style="font-size:11px;font-weight:700;color:var(--bb);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px">How to share with friends</div>
     <div style="font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px">
@@ -1143,6 +1178,125 @@ function handleImport(input){
 }
 
 // ============================================================
+// GIST SYNC
+// ============================================================
+const GIST_TOKEN_KEY = 'sp_gist_token';
+const GIST_ID_KEY = 'sp_gist_id';
+let gistToken = null;
+let gistId = null;
+
+function openGistModal(){document.getElementById('gist-modal').classList.add('open');}
+function closeGistModal(){document.getElementById('gist-modal').classList.remove('open');}
+
+async function saveGistToken(){
+  const token = document.getElementById('gist-token-input').value.trim();
+  if(!token){alert('Please enter your token.');return;}
+  const st = document.getElementById('gist-status');
+  st.textContent = 'Connecting...'; st.style.color = 'var(--muted)';
+  try {
+    // verify token works
+    const r = await fetch('https://api.github.com/user', {headers:{'Authorization':'token '+token,'Accept':'application/vnd.github.v3+json'}});
+    if(!r.ok){st.textContent='Invalid token. Check and try again.';st.style.color='var(--red)';return;}
+    const u = await r.json();
+    gistToken = token;
+    localStorage.setItem(GIST_TOKEN_KEY, token);
+    st.textContent = '✓ Connected as @'+u.login+'. Creating Gist...';
+    st.style.color = 'var(--green)';
+    await syncToGist(true);
+    closeGistModal();
+    updateGistUI();
+  } catch(e){
+    st.textContent='Connection failed. Check your internet.';st.style.color='var(--red)';
+  }
+}
+
+async function syncToGist(isFirst=false){
+  if(!gistToken) return;
+  const payload = JSON.stringify({trades,notes,cashMoves,cash,inceptionCapital,inceptionDate,fxRates,syncedAt:new Date().toISOString()}, null, 2);
+  try {
+    if(!gistId){
+      // create new gist
+      const r = await fetch('https://api.github.com/gists',{
+        method:'POST',
+        headers:{'Authorization':'token '+gistToken,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
+        body: JSON.stringify({description:'Settlement Portfolio Data',public:false,files:{'settlement_portfolio.json':{content:payload}}})
+      });
+      if(!r.ok)throw new Error('Failed to create Gist');
+      const g = await r.json();
+      gistId = g.id;
+      localStorage.setItem(GIST_ID_KEY, gistId);
+    } else {
+      // update existing gist
+      const r = await fetch('https://api.github.com/gists/'+gistId,{
+        method:'PATCH',
+        headers:{'Authorization':'token '+gistToken,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
+        body: JSON.stringify({files:{'settlement_portfolio.json':{content:payload}}})
+      });
+      if(!r.ok)throw new Error('Failed to update Gist');
+    }
+    updateGistUI();
+    if(!isFirst) showToast('Synced to Gist ✓');
+  } catch(e){
+    showToast('Sync failed: '+e.message, true);
+  }
+}
+
+async function loadFromGist(){
+  if(!gistToken||!gistId) return;
+  try {
+    const r = await fetch('https://api.github.com/gists/'+gistId,{
+      headers:{'Authorization':'token '+gistToken,'Accept':'application/vnd.github.v3+json'}
+    });
+    if(!r.ok) return;
+    const g = await r.json();
+    const content = g.files['settlement_portfolio.json']?.content;
+    if(!content) return;
+    const d = JSON.parse(content);
+    trades=d.trades||[]; notes=d.notes||[]; cashMoves=d.cashMoves||[];
+    cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};
+    inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};
+    inceptionDate=d.inceptionDate||null;
+    if(d.fxRates) fxRates=d.fxRates;
+    save(); refreshAll(); renderNotes();
+  } catch(e){ console.log('Gist load error',e); }
+}
+
+function disconnectGist(){
+  if(!confirm('Disconnect Gist sync? Your local data stays.')) return;
+  gistToken=null; gistId=null;
+  localStorage.removeItem(GIST_TOKEN_KEY);
+  localStorage.removeItem(GIST_ID_KEY);
+  updateGistUI();
+}
+
+function updateGistUI(){
+  const connected = !!(gistToken && gistId);
+  document.getElementById('gist-connected-status').style.display = connected?'block':'none';
+  document.getElementById('gist-connect-btn').style.display = connected?'none':'inline-block';
+  document.getElementById('gist-sync-btn').style.display = connected?'inline-block':'none';
+  document.getElementById('gist-disconnect-btn').style.display = connected?'inline-block':'none';
+  if(connected) document.getElementById('gist-id-display').textContent = 'Gist ID: '+gistId;
+}
+
+function showToast(msg, isErr=false){
+  let t=document.getElementById('toast');
+  if(!t){t=document.createElement('div');t.id='toast';t.style.cssText='position:fixed;bottom:24px;right:24px;padding:10px 18px;font-size:12px;font-family:var(--font-mono);z-index:999;border:1px solid;border-radius:2px;transition:opacity .3s';document.body.appendChild(t);}
+  t.textContent=msg;
+  t.style.background=isErr?'rgba(255,59,78,.15)':'rgba(0,196,113,.15)';
+  t.style.borderColor=isErr?'rgba(255,59,78,.4)':'rgba(0,196,113,.4)';
+  t.style.color=isErr?'var(--red)':'var(--green)';
+  t.style.opacity='1';
+  setTimeout(()=>{t.style.opacity='0';},3000);
+}
+
+// override save to also sync to gist
+const _origSave = save;
+function save(){
+  _origSave();
+  if(gistToken && gistId) syncToGist();
+}
+
+// ============================================================
 // CLOCK
 // ============================================================
 function tick(){
@@ -1157,8 +1311,17 @@ function tick(){
 document.getElementById('f-date').value=new Date().toISOString().split('T')[0];
 document.getElementById('c-date').value=new Date().toISOString().split('T')[0];
 setInterval(tick,1000);tick();
+// load gist credentials
+gistToken = localStorage.getItem(GIST_TOKEN_KEY)||null;
+gistId = localStorage.getItem(GIST_ID_KEY)||null;
+updateGistUI();
+// load data — from gist if connected, else localStorage
 load();
-refreshAll();renderNotes();
+if(gistToken && gistId){
+  loadFromGist().then(()=>{refreshAll();renderNotes();});
+} else {
+  refreshAll();renderNotes();
+}
 const hasInc=CCYS.some(c=>(inceptionCapital[c]||0)>0);
 if(!hasInc&&!trades.length)openCashModal();
 fetchFX();
