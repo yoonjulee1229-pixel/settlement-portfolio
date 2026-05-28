@@ -1069,12 +1069,14 @@ function deleteTrade(id){
 // REFRESH ALL
 // ============================================================
 function refreshAll(){
-  updateStats();renderHoldings();
+  updateStats();
+  renderHoldings();
+  renderCashCards();
+  renderCashLog();
   if(document.getElementById('panel-performance').classList.contains('active'))renderPerfChart();
   if(document.getElementById('panel-overview').classList.contains('active'))renderOvChart();
   if(document.getElementById('panel-positions').classList.contains('active'))renderPositions();
   if(document.getElementById('panel-log').classList.contains('active'))renderLog();
-  if(document.getElementById('panel-cash').classList.contains('active')){renderCashCards();renderCashLog();}
 }
 
 // ============================================================
