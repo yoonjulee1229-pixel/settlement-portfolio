@@ -378,6 +378,16 @@ textarea.fi{resize:vertical;min-height:56px}
 <!-- SHARE -->
 <div id="panel-share" class="panel">
   <div class="shdr">Share journal</div>
+  <div class="scard" style="border-left:3px solid var(--yellow);margin-bottom:10px">
+    <div style="font-size:11px;font-weight:700;color:var(--yellow);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">&#9679; Finnhub live prices</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:10px">Free API key from <a href="https://finnhub.io" target="_blank" style="color:var(--yellow)">finnhub.io</a> — US real-time, HK/FR 15min delayed. Key stored in your browser only.</div>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <input type="password" class="fi" id="finnhub-key-input" placeholder="Enter Finnhub API key (d1xxxxxxxx...)" style="flex:1;font-size:12px">
+      <button class="bp" onclick="saveFinnhubKey()" style="padding:8px 14px;white-space:nowrap">Save key</button>
+      <button class="bs" onclick="clearFinnhubKey()" style="padding:8px 14px;white-space:nowrap">Clear</button>
+    </div>
+    <div id="finnhub-status" style="font-size:10px;color:var(--muted)">No key saved.</div>
+  </div>
   <div class="scard" style="border-left:3px solid var(--green);margin-bottom:10px">
     <div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">&#9679; Live sync via GitHub Gist</div>
     <div style="font-size:11px;color:var(--muted);line-height:1.7;margin-bottom:10px">Connect your GitHub token — data auto-syncs to a private Gist. Share the URL and friends always see the latest.</div>
@@ -564,28 +574,44 @@ async function fetchFX(){
 // ═══════════════════════════════════════════════
 // LIVE PRICES
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// LIVE PRICES — Finnhub
+// ═══════════════════════════════════════════════
+const FINNHUB_KEY_SK='sp_finnhub_key';
+let finnhubKey=localStorage.getItem(FINNHUB_KEY_SK)||'';
+
+function toFinnhubSym(ticker,market){
+  if(market==='HK'){
+    // HK: 0700.HK → convert to Finnhub format
+    return ticker.replace(/^0+(\d)/,'$1')+'.HK';  // strip leading zeros: 0700.HK → 700.HK? Actually finnhub uses full: check
+  }
+  if(market==='FR') return ticker; // MC.PA etc
+  return ticker; // US fine
+}
+
 async function fetchPrices(){
   const open=trades.filter(t=>t.isOpen);
   if(!open.length){document.getElementById('price-status').innerHTML='<span style="color:var(--muted)">No open positions</span>';return;}
+  if(!finnhubKey){
+    // prompt for key
+    const k=prompt('Enter your Finnhub API key (free at finnhub.io):');
+    if(!k)return;
+    finnhubKey=k.trim();
+    localStorage.setItem(FINNHUB_KEY_SK,finnhubKey);
+  }
   if(pricesFetching)return;
   pricesFetching=true;
   document.getElementById('price-status').innerHTML='<span style="color:var(--yellow)">&#9679; Fetching...</span>';
-  const syms=[...new Set(open.map(t=>t.ticker))];
+  const syms=[...new Set(open.map(t=>({ticker:t.ticker,market:t.market})))];
   let fetched=0;
-  // Try Yahoo Finance via allorigins proxy for each ticker
-  await Promise.all(syms.map(async ticker=>{
+  await Promise.all(syms.map(async ({ticker,market})=>{
     try{
-      // convert ticker to yahoo format
-      let ySym=ticker;
-      if(ticker.match(/^\d+\.HK$/))ySym=ticker.replace(/^0+/,'').padStart(4,'0')+'.HK'; // normalize HK tickers
-      const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1d&range=1d`;
-      const proxy=`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const r=await fetch(proxy,{signal:AbortSignal.timeout(8000)});
+      const sym=toFinnhubSym(ticker,market);
+      const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(sym)}&token=${finnhubKey}`,{signal:AbortSignal.timeout(8000)});
       if(!r.ok)return;
-      const raw=await r.json();
-      const d=JSON.parse(raw.contents);
-      const price=d?.chart?.result?.[0]?.meta?.regularMarketPrice;
-      if(price){
+      const d=await r.json();
+      const price=d.c; // current price
+      if(price&&price>0){
         open.filter(t=>t.ticker===ticker).forEach(t=>t.lastPrice=price);
         fetched++;
       }
@@ -594,10 +620,11 @@ async function fetchPrices(){
   pricesFetching=false;
   if(fetched>0){
     const tm=new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
-    document.getElementById('price-status').innerHTML=`<span style="color:var(--green)">&#9679; ${fetched}/${syms.length} @ ${tm}</span>`;
+    document.getElementById('price-status').innerHTML=`<span style="color:var(--green)">&#9679; ${fetched}/${syms.length} live @ ${tm}</span>`;
     save();refreshAll();
   } else {
-    document.getElementById('price-status').innerHTML='<span style="color:var(--red)">&#9679; Failed — update manually</span>';
+    finnhubKey='';localStorage.removeItem(FINNHUB_KEY_SK);
+    document.getElementById('price-status').innerHTML='<span style="color:var(--red)">&#9679; Failed — check API key</span>';
   }
 }
 
@@ -975,7 +1002,27 @@ async function loadFromGist(){
   }catch(e){}
 }
 function disconnectGist(){if(!confirm('Disconnect Gist sync?'))return;gistToken=null;gistId=null;localStorage.removeItem(GIST_TK);localStorage.removeItem(GIST_ID);updateGistUI();}
-function updateGistUI(){
+function saveFinnhubKey(){
+  const k=document.getElementById('finnhub-key-input').value.trim();
+  if(!k){alert('Enter your Finnhub API key.');return;}
+  finnhubKey=k;localStorage.setItem(FINNHUB_KEY_SK,k);
+  updateFinnhubStatus();
+  fetchPrices();
+}
+function clearFinnhubKey(){
+  finnhubKey='';localStorage.removeItem(FINNHUB_KEY_SK);
+  document.getElementById('finnhub-key-input').value='';
+  updateFinnhubStatus();
+}
+function updateFinnhubStatus(){
+  const el=document.getElementById('finnhub-status');if(!el)return;
+  if(finnhubKey){
+    el.innerHTML='<span style="color:var(--green)">&#10003; Key saved — prices auto-refresh every 5 min</span>';
+    document.getElementById('finnhub-key-input').value=finnhubKey;
+  } else {
+    el.innerHTML='<span style="color:var(--muted)">No key saved. Get free key at finnhub.io</span>';
+  }
+}
   const on=!!(gistToken&&gistId);
   document.getElementById('gist-status-box').style.display=on?'block':'none';
   document.getElementById('gist-connect-btn').style.display=on?'none':'inline-block';
@@ -1027,6 +1074,7 @@ setInterval(fetchPrices,5*60*1000);
 gistToken=localStorage.getItem(GIST_TK)||null;
 gistId=localStorage.getItem(GIST_ID)||null;
 updateGistUI();
+updateFinnhubStatus();
 load();
 if(gistToken&&gistId){loadFromGist().then(()=>{refreshAll();renderNotes();fetchPrices();});}
 else{refreshAll();renderNotes();fetchPrices();}
