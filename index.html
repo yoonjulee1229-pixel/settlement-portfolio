@@ -813,6 +813,7 @@ function updatePriceStatus(state) {
 // ============================================================
 function save(){
   try{localStorage.setItem(SK,JSON.stringify({trades,notes,cashMoves,cash,inceptionCapital,inceptionDate}));}catch(e){}
+  if(gistToken && gistId) syncToGist();
 }
 function load(){
   try{
@@ -1447,12 +1448,6 @@ function showToast(msg, isErr=false){
   setTimeout(()=>{t.style.opacity='0';},3000);
 }
 
-// override save to also sync to gist
-const _origSave = save;
-function save(){
-  _origSave();
-  if(gistToken && gistId) syncToGist();
-}
 
 // ============================================================
 // CLOCK
