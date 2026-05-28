@@ -233,6 +233,10 @@ tbody tr:hover td{background:var(--bg3)}
     <div class="fx-status"><div class="pulse"></div><span id="fx-note" style="overflow:hidden;text-overflow:ellipsis">Fetching rates...</span></div>
   </div>
   <div class="tb-right">
+    <div style="text-align:right;margin-right:14px;border-right:1px solid var(--border2);padding-right:14px">
+      <div id="price-status" style="font-size:10px;white-space:nowrap"><span style="color:var(--muted)">&#9679; No prices yet</span></div>
+      <button onclick="fetchLivePrices()" style="font-size:9px;background:transparent;border:1px solid var(--border2);color:var(--muted);padding:2px 8px;cursor:pointer;font-family:var(--font-mono);margin-top:2px;text-transform:uppercase;letter-spacing:.5px" title="Refresh live prices">&#8635; Refresh</button>
+    </div>
     <div style="text-align:right">
       <div class="tb-time" id="clock">--:--:--</div>
       <div class="tb-date" id="dateline">SGT</div>
@@ -298,13 +302,13 @@ tbody tr:hover td{background:var(--bg3)}
   <div class="form-wrap">
     <div class="form-grid">
       <div class="field"><label>Type</label>
-        <select id="c-type">
+        <select id="c-type" onchange="onCashTypeChange()">
           <option value="deposit">Deposit (add cash)</option>
           <option value="withdraw">Withdraw (remove cash)</option>
           <option value="convert">FX Convert</option>
         </select>
       </div>
-      <div class="field"><label>Currency</label>
+      <div class="field"><label id="c-ccy-label">Currency</label>
         <select id="c-ccy">
           <option value="SGD">SGD</option>
           <option value="USD">USD</option>
@@ -312,9 +316,19 @@ tbody tr:hover td{background:var(--bg3)}
           <option value="HKD">HKD</option>
         </select>
       </div>
-      <div class="field"><label>Amount</label><input type="number" id="c-amount" placeholder="0.00" step="0.01"></div>
+      <div class="field"><label id="c-amount-label">Amount</label><input type="number" id="c-amount" placeholder="0.00" step="0.01"></div>
       <div class="field"><label>Date</label><input type="date" id="c-date"></div>
-      <div class="field full"><label>Note (optional)</label><input type="text" id="c-note" placeholder="e.g. Initial deposit, monthly top-up..."></div>
+      <!-- FX Convert extra fields -->
+      <div class="field" id="c-toccy-wrap" style="display:none"><label>Convert TO currency</label>
+        <select id="c-toccy">
+          <option value="SGD">SGD</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="HKD">HKD</option>
+        </select>
+      </div>
+      <div class="field" id="c-toamount-wrap" style="display:none"><label>Amount received <span style="font-size:9px;color:var(--muted)">(actual amount you got)</span></label><input type="number" id="c-toamount" placeholder="0.00" step="0.01"></div>
+      <div class="field full"><label>Note (optional)</label><input type="text" id="c-note" placeholder="e.g. Initial deposit, monthly top-up, SGD→HKD for HKEX..."></div>
     </div>
     <button class="btn-p" onclick="addCashMove()">&#43; Add movement</button>
   </div>
@@ -694,12 +708,105 @@ async function fetchFX(){
 
 function toSGD(v,c){return v*(fxRates[c]||1);}
 const LOC={minimumFractionDigits:2,maximumFractionDigits:2};
-function n2s(v){return Math.abs(v).toLocaleString('en-US',LOC);}  // number to comma string
-function fmtS(v){return (v>=0?'+S$':'-S$')+n2s(v);}              // signed SGD
-function fmtSabs(v){return 'S$'+n2s(v);}                          // unsigned SGD
+function n2s(v){return Math.abs(v).toLocaleString('en-US',LOC);}
+function fmtS(v){return (v>=0?'+S$':'-S$')+n2s(v);}
+function fmtSabs(v){return 'S$'+n2s(v);}
 function fmtN(v,c){const s=SYM[c]||'';return(v>=0?'+':'-')+s+n2s(v);}
 function fmtP(v){return(v>=0?'+':'')+v.toFixed(2)+'%';}
 function fmtAmt(v,c){return (SYM[c]||'')+n2s(v);}
+
+// ============================================================
+// LIVE PRICES — Yahoo Finance via Claude API proxy
+// ============================================================
+let livePrices = {};  // { 'AAPL': 189.50, '0700.HK': 320.0, ... }
+let pricesFetching = false;
+
+// Convert our ticker format to Yahoo Finance format
+function toYahooSymbol(ticker, market) {
+  if(market === 'HK') {
+    // HK tickers: 0700.HK → 0700.HK (already correct, but pad to 4 digits)
+    const num = ticker.replace('.HK','');
+    return num.padStart(4,'0') + '.HK';
+  }
+  if(market === 'FR') return ticker; // MC.PA etc already correct
+  return ticker; // US tickers fine as-is
+}
+
+async function fetchLivePrices() {
+  const openTrades = trades.filter(t => t.isOpen);
+  if(!openTrades.length) return;
+  if(pricesFetching) return;
+  pricesFetching = true;
+
+  // Get unique tickers
+  const symbols = [...new Set(openTrades.map(t => toYahooSymbol(t.ticker, t.market)))];
+  updatePriceStatus('fetching');
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        tools: [{type: 'web_search_20250305', name: 'web_search'}],
+        messages: [{
+          role: 'user',
+          content: `Get the latest stock prices for these tickers: ${symbols.join(', ')}.
+Search Yahoo Finance or any financial source for current/most recent prices.
+Return ONLY a JSON object like: {"AAPL": 189.50, "0700.HK": 320.0, "MC.PA": 650.0}
+Use the ticker symbols exactly as I gave them. Numbers only, no currency symbols.`
+        }]
+      })
+    });
+
+    const data = await res.json();
+    // Find the text response (after tool use)
+    const textBlock = data.content.filter(b => b.type === 'text').pop();
+    if(textBlock) {
+      const raw = textBlock.text.replace(/```json|```/g,'').trim();
+      // extract JSON object from response
+      const match = raw.match(/\{[^{}]*\}/s);
+      if(match) {
+        const prices = JSON.parse(match[0]);
+        // map back to our ticker format
+        openTrades.forEach(t => {
+          const ySym = toYahooSymbol(t.ticker, t.market);
+          if(prices[ySym] != null) {
+            livePrices[t.ticker] = parseFloat(prices[ySym]);
+            t.lastPrice = livePrices[t.ticker];
+          } else if(prices[t.ticker] != null) {
+            livePrices[t.ticker] = parseFloat(prices[t.ticker]);
+            t.lastPrice = livePrices[t.ticker];
+          }
+        });
+        updatePriceStatus('live');
+        refreshAll();
+      } else {
+        updatePriceStatus('error');
+      }
+    }
+  } catch(e) {
+    updatePriceStatus('error');
+  }
+  pricesFetching = false;
+}
+
+function updatePriceStatus(state) {
+  const el = document.getElementById('price-status');
+  if(!el) return;
+  if(state === 'fetching') {
+    el.innerHTML = '<span style="color:var(--yellow)">&#9679; Fetching prices...</span>';
+  } else if(state === 'live') {
+    const t = new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
+    el.innerHTML = '<span style="color:var(--green)">&#9679; Live prices @ '+t+'</span>';
+  } else if(state === 'error') {
+    el.innerHTML = '<span style="color:var(--red)">&#9679; Price fetch failed</span>';
+  } else {
+    el.innerHTML = '<span style="color:var(--muted)">&#9679; No open positions</span>';
+  }
+}
+
 
 // ============================================================
 // STORAGE
@@ -742,6 +849,14 @@ function saveCash(){
 // ============================================================
 // CASH MOVEMENTS
 // ============================================================
+function onCashTypeChange(){
+  const type=document.getElementById('c-type').value;
+  const isConvert=type==='convert';
+  document.getElementById('c-toccy-wrap').style.display=isConvert?'':'none';
+  document.getElementById('c-toamount-wrap').style.display=isConvert?'':'none';
+  document.getElementById('c-ccy-label').textContent=isConvert?'Convert FROM currency':'Currency';
+  document.getElementById('c-amount-label').textContent=isConvert?'Amount to convert (sell)':'Amount';
+}
 function addCashMove(){
   const type=document.getElementById('c-type').value;
   const ccy=document.getElementById('c-ccy').value;
@@ -749,23 +864,44 @@ function addCashMove(){
   const date=document.getElementById('c-date').value||new Date().toISOString().split('T')[0];
   const note=document.getElementById('c-note').value.trim();
   if(!amount){alert('Enter an amount.');return;}
-  const sgdEquiv=toSGD(amount,ccy);
-  cashMoves.push({id:Date.now(),date,type,ccy,amount,note,sgdEquiv});
-  if(type==='deposit')cash[ccy]=(cash[ccy]||0)+amount;
-  else if(type==='withdraw'){
-    if((cash[ccy]||0)<amount){alert('Insufficient '+ccy+' balance.');return;}
+
+  if(type==='convert'){
+    const toCcy=document.getElementById('c-toccy').value;
+    const toAmount=parseFloat(document.getElementById('c-toamount').value)||0;
+    if(toCcy===ccy){alert('From and To currency must be different.');return;}
+    if(!toAmount){alert('Enter the amount received.');return;}
+    if((cash[ccy]||0)<amount){alert('Insufficient '+ccy+' balance (have '+fmtAmt(cash[ccy]||0,ccy)+')');return;}
+    // deduct from source, add to target
     cash[ccy]-=amount;
+    cash[toCcy]=(cash[toCcy]||0)+toAmount;
+    const sgdEquiv=toSGD(amount,ccy);
+    cashMoves.push({id:Date.now(),date,type:'convert',ccy,amount,toCcy,toAmount,note:note||(fmtAmt(amount,ccy)+' → '+fmtAmt(toAmount,toCcy)),sgdEquiv});
+    document.getElementById('c-toamount').value='';
+  } else {
+    const sgdEquiv=toSGD(amount,ccy);
+    cashMoves.push({id:Date.now(),date,type,ccy,amount,note,sgdEquiv});
+    if(type==='deposit')cash[ccy]=(cash[ccy]||0)+amount;
+    else if(type==='withdraw'){
+      if((cash[ccy]||0)<amount){alert('Insufficient '+ccy+' balance.');return;}
+      cash[ccy]-=amount;
+    }
   }
   if(!inceptionDate)inceptionDate=date;
   if(type==='deposit'&&!Object.values(inceptionCapital).some(v=>v>0)){inceptionCapital[ccy]=amount;}
   save();refreshAll();renderCashLog();
-  document.getElementById('c-amount').value='';document.getElementById('c-note').value='';
+  document.getElementById('c-amount').value='';
+  document.getElementById('c-note').value='';
 }
 function deleteCashMove(id){
   const m=cashMoves.find(x=>x.id===id);
   if(!m)return;
   if(m.type==='deposit')cash[m.ccy]=Math.max(0,(cash[m.ccy]||0)-m.amount);
   else if(m.type==='withdraw')cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
+  else if(m.type==='convert'){
+    // reverse the conversion
+    cash[m.ccy]=(cash[m.ccy]||0)+m.amount;
+    cash[m.toCcy]=Math.max(0,(cash[m.toCcy]||0)-m.toAmount);
+  }
   cashMoves=cashMoves.filter(x=>x.id!==id);
   save();refreshAll();renderCashLog();
 }
@@ -786,15 +922,22 @@ function renderCashLog(){
   const tbody=document.getElementById('cash-log-body');
   if(!cashMoves.length){tbody.innerHTML='<tr><td colspan="7"><div class="empty">No movements yet.</div></td></tr>';return;}
   const sorted=[...cashMoves].sort((a,b)=>b.date.localeCompare(a.date));
-  tbody.innerHTML=sorted.map(m=>`<tr>
-    <td style="color:var(--muted)">${m.date}</td>
-    <td><span class="badge b-${m.type}">${m.type.toUpperCase()}</span></td>
-    <td>${m.ccy}</td>
-    <td style="font-weight:700">${(m.type==='withdraw'?'-':'+')}${fmtAmt(m.amount,m.ccy)}</td>
-    <td>${m.type==='withdraw'?'-':'+'} ${fmtSabs(m.sgdEquiv)}</td>
-    <td style="color:var(--muted);font-size:11px">${m.note||'—'}</td>
-    <td><button onclick="deleteCashMove(${m.id})" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer;font-family:inherit">&#10005;</button></td>
-  </tr>`).join('');
+  tbody.innerHTML=sorted.map(m=>{
+    const isConvert=m.type==='convert';
+    const amtDisplay=isConvert
+      ? `<span style="color:var(--red)">-${fmtAmt(m.amount,m.ccy)}</span> → <span style="color:var(--green)">+${fmtAmt(m.toAmount,m.toCcy)}</span>`
+      : `<span style="${m.type==='withdraw'?'color:var(--red)':'color:var(--green)'}">${m.type==='withdraw'?'-':'+'}${fmtAmt(m.amount,m.ccy)}</span>`;
+    const ccyDisplay=isConvert?`${m.ccy} → ${m.toCcy}`:m.ccy;
+    return `<tr>
+      <td style="color:var(--muted)">${m.date}</td>
+      <td><span class="badge b-${m.type}">${m.type.toUpperCase()}</span></td>
+      <td style="font-size:11px">${ccyDisplay}</td>
+      <td style="font-weight:700">${amtDisplay}</td>
+      <td style="font-size:11px;color:var(--muted)">${fmtSabs(m.sgdEquiv)}</td>
+      <td style="color:var(--muted);font-size:11px">${m.note||'—'}</td>
+      <td><button onclick="deleteCashMove(${m.id})" style="font-size:9px;padding:2px 6px;background:transparent;border:1px solid var(--border2);color:var(--muted);cursor:pointer;font-family:inherit">&#10005;</button></td>
+    </tr>`;
+  }).join('');
 }
 
 // ============================================================
@@ -1318,13 +1461,15 @@ updateGistUI();
 // load data — from gist if connected, else localStorage
 load();
 if(gistToken && gistId){
-  loadFromGist().then(()=>{refreshAll();renderNotes();});
+  loadFromGist().then(()=>{refreshAll();renderNotes();fetchLivePrices();});
 } else {
-  refreshAll();renderNotes();
+  refreshAll();renderNotes();fetchLivePrices();
 }
 const hasInc=CCYS.some(c=>(inceptionCapital[c]||0)>0);
 if(!hasInc&&!trades.length)openCashModal();
 fetchFX();
+// auto-refresh prices every 5 minutes
+setInterval(fetchLivePrices, 5*60*1000);
 </script>
 </body>
 </html>
