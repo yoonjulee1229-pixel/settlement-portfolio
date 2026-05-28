@@ -819,9 +819,11 @@ function load(){
     const r=localStorage.getItem(SK);
     if(r){
       const d=JSON.parse(r);
-      trades=(d.trades||[]).map(t=>({...t,id:String(t.id)}));
+      // sanitize IDs — old data may have decimal IDs like "1234567890.1234"
+      const cleanId=id=>('id'+String(id).replace(/\./g,'_'));
+      trades=(d.trades||[]).map(t=>({...t,id:cleanId(t.id)}));
       notes=d.notes||[];
-      cashMoves=(d.cashMoves||[]).map(m=>({...m,id:String(m.id)}));
+      cashMoves=(d.cashMoves||[]).map(m=>({...m,id:cleanId(m.id)}));
       cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};
       inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};
       inceptionDate=d.inceptionDate||null;
@@ -849,7 +851,7 @@ function saveCash(){
   if(!inceptionDate)inceptionDate=new Date().toISOString().split('T')[0];
   // record as deposit
   CCYS.forEach(c=>{
-    if(vals[c]>0)cashMoves.push({id:String(Date.now())+String(Math.random()).slice(2),date:inceptionDate,type:'deposit',ccy:c,amount:vals[c],note:'Inception capital',sgdEquiv:toSGD(vals[c],c)});
+    if(vals[c]>0)cashMoves.push({id:'id'+Date.now()+'x'+Math.floor(Math.random()*999999),date:inceptionDate,type:'deposit',ccy:c,amount:vals[c],note:'Inception capital',sgdEquiv:toSGD(vals[c],c)});
   });
   save();closeCashModal();refreshAll();renderCashLog();
 }
@@ -883,11 +885,11 @@ function addCashMove(){
     cash[ccy]-=amount;
     cash[toCcy]=(cash[toCcy]||0)+toAmount;
     const sgdEquiv=toSGD(amount,ccy);
-    cashMoves.push({id:String(Date.now()),date,type:'convert',ccy,amount,toCcy,toAmount,note:note||(fmtAmt(amount,ccy)+' → '+fmtAmt(toAmount,toCcy)),sgdEquiv});
+    cashMoves.push({id:'id'+Date.now(),date,type:'convert',ccy,amount,toCcy,toAmount,note:note||(fmtAmt(amount,ccy)+' → '+fmtAmt(toAmount,toCcy)),sgdEquiv});
     document.getElementById('c-toamount').value='';
   } else {
     const sgdEquiv=toSGD(amount,ccy);
-    cashMoves.push({id:String(Date.now()),date,type,ccy,amount,note,sgdEquiv});
+    cashMoves.push({id:'id'+Date.now(),date,type,ccy,amount,note,sgdEquiv});
     if(type==='deposit')cash[ccy]=(cash[ccy]||0)+amount;
     else if(type==='withdraw'){
       if((cash[ccy]||0)<amount){alert('Insufficient '+ccy+' balance.');return;}
@@ -1053,7 +1055,7 @@ function addTrade(){
   if(!isOpen&&side==='short'&&exit!=null){cash[ccy]=(cash[ccy]||0)+(exit*qty);}
   const info=TICKERS.find(s=>s.t===ticker)||{n:ticker};
   if(!inceptionDate)inceptionDate=date;
-  trades.unshift({id:String(Date.now()),ticker,name:info.n,market,side,ccy,entry,exit,qty,date,noteText,pnlNative,pnlSGD,costSGD,fxUsed:fxRates[ccy],isOpen,lastPrice:exit||entry});
+  trades.unshift({id:'id'+Date.now(),ticker,name:info.n,market,side,ccy,entry,exit,qty,date,noteText,pnlNative,pnlSGD,costSGD,fxUsed:fxRates[ccy],isOpen,lastPrice:exit||entry});
   save();refreshAll();clearForm();sw('overview');
 }
 function deleteTrade(id){
@@ -1405,9 +1407,10 @@ async function loadFromGist(){
     const content = g.files['settlement_portfolio.json']?.content;
     if(!content) return;
     const d = JSON.parse(content);
-    trades=(d.trades||[]).map(t=>({...t,id:String(t.id)}));
+    const cleanId=id=>('id'+String(id).replace(/\./g,'_'));
+    trades=(d.trades||[]).map(t=>({...t,id:cleanId(t.id)}));
     notes=d.notes||[];
-    cashMoves=(d.cashMoves||[]).map(m=>({...m,id:String(m.id)}));
+    cashMoves=(d.cashMoves||[]).map(m=>({...m,id:cleanId(m.id)}));
     cash=d.cash||{SGD:0,USD:0,EUR:0,HKD:0};
     inceptionCapital=d.inceptionCapital||{SGD:0,USD:0,EUR:0,HKD:0};
     inceptionDate=d.inceptionDate||null;
