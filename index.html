@@ -1023,6 +1023,7 @@ function updateFinnhubStatus(){
     el.innerHTML='<span style="color:var(--muted)">No key saved. Get free key at finnhub.io</span>';
   }
 }
+function updateGistUI(){
   const on=!!(gistToken&&gistId);
   document.getElementById('gist-status-box').style.display=on?'block':'none';
   document.getElementById('gist-connect-btn').style.display=on?'none':'inline-block';
